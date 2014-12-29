@@ -66,6 +66,27 @@ app.use(bodyParser.urlencoded({
 	extended : true
 }));
 
+var credentials = require('./credentials.js');
+app.use(require('cookie-parser')(credentials.cookieSecret));
+app.use(require('express-session')());
+
+app.use(function(req, res, next) {
+	// if there's a flash message, transfer
+	// it to the context, then clear it
+	res.locals.flash = req.session.flash;
+	delete req.session.flash;
+	next();
+});
+var nodemailer = require('nodemailer');
+var mailTransport = nodemailer.createTransport('SMTP', {
+	host : 'smtp.qq.com',
+	secureConnection : true, // use SSL
+	port : 465,
+	auth : {
+		user : credentials.meadowlarkSmtp.user,
+		pass : credentials.meadowlarkSmtp.password,
+	}
+});
 // Handle the normal path
 app.get('/', function(req, res) {
 	res.render('home');
@@ -113,7 +134,55 @@ app.post('/process', function(req, res) {
 		res.redirect(303, '/thank-you');
 	}
 });
-
+app
+		.post(
+				'/newsletter',
+				function(req, res) {
+					var name = req.body.name || '', email = req.body.email
+							|| '';
+					// input validation
+					if (!email.match(VALID_EMAIL_REGEX)) {
+						if (req.xhr)
+							return res.json({
+								error : 'Invalid name email address.'
+							});
+						req.session.flash = {
+							type : 'danger',
+							intro : 'Validation error!',
+							message : 'The email address you entered was not valid.',
+						};
+						return res.redirect(303, '/newsletter/archive');
+					}
+					new NewsletterSignup({
+						name : name,
+						email : email
+					})
+							.save(function(err) {
+								if (err) {
+									if (req.xhr)
+										return res.json({
+											error : 'Database error.'
+										});
+									req.session.flash = {
+										type : 'danger',
+										intro : 'Database error!',
+										message : 'There was a database error; please try again later.',
+									}
+									return res.redirect(303,
+											'/newsletter/archive');
+								}
+								if (req.xhr)
+									return res.json({
+										success : true
+									});
+								req.session.flash = {
+									type : 'success',
+									intro : 'Thank you!',
+									message : 'You have now been signed up for the newsletter.',
+								};
+								return res.redirect(303, '/newsletter/archive');
+							});
+				});
 var formidable = require('formidable');
 
 app.get('/contest/vacation-photo', function(req, res) {

@@ -23,28 +23,37 @@
 		</div>
 	</form>
 </div>
-	{{#section 'jquery'}}
-	<script>
-		$(document).ready(function() {
-			$('.newsletterForm').on('submit', function(evt) {
-				evt.preventDefault();
-				var action = $(this).attr('action');
-				var $container = $(this).closest('.formContainer');
-				$.ajax({
-					url : action,
-					type : 'POST',
-					success : function(data) {
-						if (data.success) {
-							$container.html('<h2>Thank you!</h2>');
-						} else {
-							$container.html('There was a problem.');
-						}
-					},
-					error : function() {
+{{#if flash}}
+<div class="alert alert-dismissible alert-{{flash.type}}">
+	<button type="button" class="close" data-dismiss="alert"
+		aria-hidden="true">
+		&times;
+		<button>
+			<strong>{{flash.intro}}</strong> {{{flash.message}}}
+</div>
+{{/if}}
+{{#section 'jquery'}}
+<script>
+	$(document).ready(function() {
+		$('.newsletterForm').on('submit', function(evt) {
+			evt.preventDefault();
+			var action = $(this).attr('action');
+			var $container = $(this).closest('.formContainer');
+			$.ajax({
+				url : action,
+				type : 'POST',
+				success : function(data) {
+					if (data.success) {
+						$container.html('<h2>Thank you!</h2>');
+					} else {
 						$container.html('There was a problem.');
 					}
-				});
+				},
+				error : function() {
+					$container.html('There was a problem.');
+				}
 			});
 		});
-	</script>
-	{{/section}}
+	});
+</script>
+{{/section}}
