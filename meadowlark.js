@@ -66,7 +66,7 @@ app.use(bodyParser.urlencoded({
 	extended : true
 }));
 
-var credentials = require('./credentials.js');
+var credentials = require('./lib/credentials.js');
 app.use(require('cookie-parser')(credentials.cookieSecret));
 app.use(require('express-session')());
 
@@ -78,15 +78,25 @@ app.use(function(req, res, next) {
 	next();
 });
 var nodemailer = require('nodemailer');
-var mailTransport = nodemailer.createTransport('SMTP', {
-	host : 'smtp.qq.com',
-	secureConnection : true, // use SSL
-	port : 465,
+var smtpTransport = require('nodemailer-smtp-transport');
+var mailTransport = nodemailer.createTransport({
+	service : "gmail",
 	auth : {
-		user : credentials.meadowlarkSmtp.user,
-		pass : credentials.meadowlarkSmtp.password,
+		user : credentials.gmail.user,
+		pass : credentials.gmail.password
 	}
 });
+mailTransport.sendMail({
+	from : 'liyaqiang82@gmail.com',
+	to : '66481176@qq.com',
+	subject : 'Your Meadowlark Travel Tour',
+	text : 'Thank you for booking your trip with Meadowlark Travel. '
+			+ 'We look forward to your visit!',
+}, function(err) {
+	if (err)
+		console.error('Unable to send email: ' + err);
+});
+
 // Handle the normal path
 app.get('/', function(req, res) {
 	res.render('home');
