@@ -68,8 +68,24 @@ app.use(bodyParser.urlencoded({
 
 var credentials = require('./lib/credentials.js');
 app.use(require('cookie-parser')(credentials.cookieSecret));
-app.use(require('express-session')());
-
+var MongoSessionStore = require('session-mongoose')(require('connect'));
+var sessionStore = new MongoSessionStore({
+	url : credentials.mongo.connectionString
+});
+app.use(require('cookie-parser')(credentials.cookieSecret));
+app.use(require('express-session')({
+	store : sessionStore
+}));
+var vhost = requre('vhost');
+var admin = express.Router();
+app.use(vhost('admin.*', admin));
+// create admin routes; these can be defined anywhere
+admin.get('/', function(req, res) {
+	res.render('admin/home');
+});
+admin.get('/users', function(req, res) {
+	res.render('admin/users');
+});
 app.use(function(req, res, next) {
 	// if there's a flash message, transfer
 	// it to the context, then clear it
@@ -77,26 +93,30 @@ app.use(function(req, res, next) {
 	delete req.session.flash;
 	next();
 });
-var nodemailer = require('nodemailer');
-var smtpTransport = require('nodemailer-smtp-transport');
-var mailTransport = nodemailer.createTransport({
-	service : "gmail",
-	auth : {
-		user : credentials.gmail.user,
-		pass : credentials.gmail.password
-	}
+// var nodemailer = require('nodemailer');
+// var smtpTransport = require('nodemailer-smtp-transport');
+// var mailTransport = nodemailer.createTransport({
+// service : "gmail",
+// auth : {
+// user : credentials.gmail.user,
+// pass : credentials.gmail.password
+// }
+// });
+// mailTransport.sendMail({
+// from : 'liyaqiang82@gmail.com',
+// to : '66481176@qq.com',
+// subject : 'Your Meadowlark Travel Tour',
+// text : 'Thank you for booking your trip with Meadowlark Travel. '
+// + 'We look forward to your visit!',
+// }, function(err) {
+// if (err)
+// console.error('Unable to send email: ' + err);
+// });
+app.use(function(req, res, next) {
+	var cluster = require('cluster');
+	if (cluster.isWorker)
+		console.log('Worker %d received request', cluster.worker.id);
 });
-mailTransport.sendMail({
-	from : 'liyaqiang82@gmail.com',
-	to : '66481176@qq.com',
-	subject : 'Your Meadowlark Travel Tour',
-	text : 'Thank you for booking your trip with Meadowlark Travel. '
-			+ 'We look forward to your visit!',
-}, function(err) {
-	if (err)
-		console.error('Unable to send email: ' + err);
-});
-
 // Handle the normal path
 app.get('/', function(req, res) {
 	res.render('home');
@@ -231,7 +251,61 @@ app.use('/upload', function(req, res, next) {
 		},
 	})(req, res, next);
 });
+var Vacation = require('./models/vacation.js');
+Vacation.addDatas();
+app.get('/vacations', function(req, res) {
+	Vacation.find({
+		available : true
+	}, function(err, vacations) {
+		var context = {
+			vacations : vacations.map(function(vacation) {
+				return {
+					sku : vacation.sku,
+					name : vacation.name,
+					description : vacation.description,
+					price : vacation.getDisplayPrice(),
+					inSeason : vacation.inSeason,
+				}
+			})
+		};
+		res.render('vacations', context);
+	});
+});
+var VacationInSeasonListener = require('./models/vacationInSeasonListener.js');
 
+app.get('/notify-me-when-in-season', function(req, res) {
+	res.render('notify-me-when-in-season', {
+		sku : req.query.sku
+	});
+});
+
+app.post('/notify-me-when-in-season', function(req, res) {
+	VacationInSeasonListener.update({
+		email : req.body.email
+	}, {
+		$push : {
+			skus : req.body.sku
+		}
+	}, {
+		upsert : true
+	}, function(err) {
+		if (err) {
+			console.error(err.stack);
+			req.session.flash = {
+				type : 'danger',
+				intro : 'Ooops!',
+				message : 'There was an error processing your request.',
+			};
+			return res.redirect(303, '/vacations');
+		}
+		req.session.flash = {
+			type : 'success',
+			intro : 'Thank you!',
+			message : 'You will be notified when this vacation is in season.',
+		};
+		return res.redirect(303, '/vacations');
+	});
+});
 // 404 catch-all handler (middleware)
 app.use(function(req, res, next) {
 	res.status(404);
@@ -240,11 +314,93 @@ app.use(function(req, res, next) {
 // 500 error handler (middleware)
 app.use(function(err, req, res, next) {
 	console.error(err.stack);
-	res.status(500);
-	res.render('500');
+	app.status(500).render('500');
+});
+var process = require('process');
+
+app.get('/epic-fail', function(req, res) {
+	process.nextTick(function() {
+		throw new Error('Kaboom!');
+	});
 });
 
-app.listen(app.get('port'), function() {
-	console.log('Express started on http://localhost:' + app.get('port')
-			+ '; press Ctrl-C to terminate.');
+app.use(function(req, res, next) {
+	// create a domain for this request
+	var domain = require('domain').create();
+	// handle errors on this domain
+	domain.on('error', function(err) {
+		console.error('DOMAIN ERROR CAUGHT\n', err.stack);
+		try {
+			// failsafe shutdown in 5 seconds
+			setTimeout(function() {
+				console.error('Failsafe shutdown.');
+				process.exit(1);
+			}, 5000);
+			// disconnect from the cluster
+			var worker = require('cluster').worker;
+			if (worker)
+				worker.disconnect();
+			// stop taking new requests
+			server.close();
+			try {
+				// attempt to use Express error route
+				next(err);
+			} catch (err) {
+				// if Express error route failed, try
+				// plain Node response
+				console.error('Express error mechanism failed.\n', err.stack);
+				res.statusCode = 500;
+				res.setHeader('content-type', 'text/plain');
+				res.end('Server error.');
+			}
+		} catch (err) {
+			console.error('Unable to send 500 response.\n', err.stack);
+		}
+	});
+	// add the request and response objects to the domain
+	domain.add(req);
+	domain.add(res);
+	// execute the rest of the request chain in the domain
+	domain.run(next);
 });
+
+// other middleware and routes go here
+var server = null;
+app.enable('trust proxy');
+
+var mongoose = require('mongoose');
+var opts = {
+	server : {
+		socketOptions : {
+			keepAlive : 1
+		}
+	}
+};
+switch (app.get('env')) {
+case 'development':
+	mongoose.connect(credentials.mongo.development.connectionString, opts);
+	break;
+case 'production':
+	mongoose.connect(credentials.mongo.production.connectionString, opts);
+	break;
+default:
+	throw new Error('Unknown execution environment: ' + app.get('env'));
+}
+var http = require('http');
+function startServer() {
+	server = http.createServer(app).listen(
+			app.get('port'),
+			function() {
+				console.log('Express started in ' + app.get('env')
+						+ ' mode on http://localhost:' + app.get('port')
+						+ '; press Ctrl-C to terminate.');
+			});
+}
+if (require.main === module) {
+	// application run directly; start app server
+	startServer();
+} else {
+	// application imported as a module via "require": export function
+	// to create server
+	module.exports = startServer;
+}
